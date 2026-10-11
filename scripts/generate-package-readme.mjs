@@ -1,32 +1,33 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-const README_PATH = path.join(ROOT, "packages", "js", "README.md");
 
 const GENERATED_SECTIONS = [
   {
     name: "console-js-esm",
-    source: path.join(ROOT, "example-apps", "console-js-esm", "index.mjs"),
+    source: "example-apps/console-js-esm/index.mjs",
     language: "js",
   },
   {
     name: "console-js-cjs",
-    source: path.join(ROOT, "example-apps", "console-js-cjs", "index.cjs"),
+    source: "example-apps/console-js-cjs/index.cjs",
     language: "js",
   },
 ];
 
-function generatedSection(name, source, language) {
+function generatedSection(name, source, language, newline = "\n") {
+  const content = source.replace(/\r\n/g, "\n").trimEnd();
+  const longestRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0].length));
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
   return [
     `<!-- BEGIN GENERATED: ${name} -->`,
-    "```" + language,
-    source.trim(),
-    "```",
+    fence + language,
+    content.replace(/\n/g, newline),
+    fence,
     `<!-- END GENERATED: ${name} -->`,
-  ].join("\n");
+  ].join(newline);
 }
 
 function replaceGeneratedSection(readme, section) {
@@ -37,48 +38,70 @@ function replaceGeneratedSection(readme, section) {
   const end = readme.indexOf(endMarker);
 
   if (start === -1 || end === -1) {
-    throw new Error(
-      `Generated section "${section.name}" is missing its start or end marker.`,
-    );
+    throw new Error(`Generated section "${section.name}" is missing its start or end marker.`);
   }
 
   if (end < start) {
-    throw new Error(
-      `Generated section "${section.name}" has an invalid marker order.`,
-    );
+    throw new Error(`Generated section "${section.name}" has an invalid marker order.`);
+  }
+
+  if (
+    readme.indexOf(startMarker, start + startMarker.length) !== -1 ||
+    readme.indexOf(endMarker, end + endMarker.length) !== -1
+  ) {
+    throw new Error(`Generated section "${section.name}" has duplicate markers.`);
+  }
+  if (/<!-- (?:BEGIN|END) GENERATED:/.test(readme.slice(start + startMarker.length, end))) {
+    throw new Error(`Generated section "${section.name}" contains nested markers.`);
   }
 
   const endPosition = end + endMarker.length;
 
   return (
     readme.slice(0, start) +
-    generatedSection(section.name, section.sourceContent, section.language) +
+    generatedSection(section.name, section.sourceContent, section.language, readme.includes("\r\n") ? "\r\n" : "\n") +
     readme.slice(endPosition)
   );
 }
 
-async function main() {
-  let readme = await readFile(README_PATH, "utf8");
+async function generateReadme({ root = ROOT, sections = GENERATED_SECTIONS, check = false } = {}) {
+  const readmePath = path.join(root, "packages", "js", "README.md");
+  const original = await readFile(readmePath, "utf8");
+  let readme = original;
 
-  for (const section of GENERATED_SECTIONS) {
-    section.sourceContent = await readFile(section.source, "utf8");
-    readme = replaceGeneratedSection(readme, section);
+  for (const section of sections) {
+    const sourceContent = await readFile(path.resolve(root, section.source), "utf8");
+    readme = replaceGeneratedSection(readme, { ...section, sourceContent });
   }
 
-  await writeFile(README_PATH, readme, "utf8");
-
-  console.log(`Generated ${path.relative(ROOT, README_PATH)}`);
+  if (check) return readme === original;
+  if (readme !== original) await writeFile(readmePath, readme, "utf8");
+  return true;
 }
 
-export { generatedSection, replaceGeneratedSection };
+export { generatedSection, replaceGeneratedSection, generateReadme };
 
-const isMainModule =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMainModule = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
 
 if (isMainModule) {
-  main().catch((error) => {
-    console.error(`Failed to generate package README: ${error.message}`);
+  const args = process.argv.slice(2);
+  if (args.some((arg) => arg !== "--check")) {
+    console.error("Usage: node scripts/generate-package-readme.mjs [--check]");
     process.exitCode = 1;
-  });
+  } else
+    generateReadme({ check: args.includes("--check") })
+      .then((inSync) => {
+        if (!inSync) {
+          console.error("Package README examples are out of sync. Run pnpm readme:generate and commit the result.");
+          process.exitCode = 1;
+        } else {
+          console.log(
+            args.includes("--check") ? "Package README examples are in sync." : "Generated packages/js/README.md",
+          );
+        }
+      })
+      .catch((error) => {
+        console.error(`Failed to generate package README: ${error.message}`);
+        process.exitCode = 1;
+      });
 }

@@ -79,11 +79,14 @@
     "Documentation": {
       "readme:generate": {
         "desc": "Generate package README examples from canonical example sources"
-  },
-  "readme:test": {
-    "desc": "Test the package README generator"
-  }
-}
+      },
+      "readme:check": {
+        "desc": "Check package README examples are synchronized without modifying files"
+      },
+      "readme:test": {
+        "desc": "Test the package README generator"
+      }
+    }
   },
   "scripts": {
     "help": "node scripts/help.js",
@@ -102,6 +105,7 @@
     "lint:js:fix": "eslint packages/js example-apps/react-js scripts/img2num-dev-scripts docs --fix",
     "editorconfig:check": "editorconfig-checker",
     "readme:generate": "node scripts/generate-package-readme.mjs",
+    "readme:check": "node scripts/generate-package-readme.mjs --check",
     "readme:test": "node --test scripts/generate-package-readme.test.mjs"
   },
   "devDependencies": {
